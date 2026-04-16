@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect, optionalAuth } = require('../middleware/auth.middleware');
 const { authorize } = require('../middleware/role.middleware');
-const { upload } = require('../config/cloudinary');
+const { upload, uploadCategory } = require('../config/cloudinary');
 const {
   getProducts, getWholesaleProducts, getProductBySlug, getProductById,
   createProduct, updateProduct, deleteProduct, updateStock,
@@ -30,8 +30,8 @@ router.get('/admin/:id', protect, authorize('admin'), getProductById);
 router.put('/:id', protect, authorize('admin'), upload.array('images', 8), updateProduct);
 router.delete('/:id', protect, authorize('admin'), deleteProduct);
 router.put('/:id/stock', protect, authorize('admin'), updateStock);
-router.post('/categories', protect, authorize('admin'), upload.single('image'), createCategory);
-router.put('/categories/:id', protect, authorize('admin'), upload.single('image'), updateCategory);
+router.post('/categories', protect, authorize('admin'), uploadCategory.single('image'), createCategory);
+router.put('/categories/:id', protect, authorize('admin'), uploadCategory.single('image'), updateCategory);
 router.delete('/categories/:id', protect, authorize('admin'), deleteCategory);
 
 module.exports = router;

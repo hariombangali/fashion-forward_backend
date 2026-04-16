@@ -22,6 +22,8 @@ const getPublicSettings = async (req, res, next) => {
       freeShippingThreshold: settings.freeShippingThreshold,
       flatShippingRate: settings.flatShippingRate,
       liveNotifications: settings.liveNotifications,
+      typography: settings.typography,
+      darkModeDefault: settings.darkModeDefault,
     };
 
     res.json({ success: true, data: publicData });
@@ -178,6 +180,18 @@ const updateSettings = async (req, res, next) => {
     }
     if (body.flatShippingRate !== undefined) {
       body.flatShippingRate = Number(body.flatShippingRate);
+    }
+
+    // Handle nested typography fields
+    if (body.typography && typeof body.typography === 'object') {
+      settings.typography = { ...settings.typography.toObject(), ...body.typography };
+      delete body.typography;
+    }
+
+    // Handle darkModeDefault
+    if (body.darkModeDefault !== undefined) {
+      settings.darkModeDefault = body.darkModeDefault === true || body.darkModeDefault === 'true';
+      delete body.darkModeDefault;
     }
 
     // Apply remaining top-level fields

@@ -69,6 +69,15 @@ const storeSettingsSchema = new mongoose.Schema(
       youtube: String,
     },
 
+    // Typography
+    typography: {
+      headingFont: { type: String, default: 'Inter' },
+      bodyFont:    { type: String, default: 'Inter' },
+    },
+
+    // Dark mode default (users can override individually)
+    darkModeDefault: { type: Boolean, default: false },
+
     // Shipping/policy toggles
     freeShippingThreshold: { type: Number, default: 999 },
     flatShippingRate: { type: Number, default: 80 },

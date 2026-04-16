@@ -24,7 +24,7 @@ const productSchema = new mongoose.Schema({
   images: [String], // Main Cloudinary URLs (min 1)
 
   // Variants
-  sizes: [{ type: String, enum: ['S', 'M', 'L', 'XL', 'XXL', 'Free Size', '28', '30', '32', '34', '36', '38', '40', '42', '44'] }],
+  sizes: [{ type: String, enum: ['S', 'M', 'L', 'XL', 'XXL', 'Free Size', '28', '30', '32', '34', '36', '38', '40', '42', '44', '2-3Y', '4-5Y', '6-7Y', '8-9Y', '10-12Y'] }],
   colors: [colorVariantSchema],
   fabric: { type: String, enum: ['Cotton', 'Silk', 'Polyester', 'Georgette', 'Chiffon', 'Rayon', 'Linen', 'Crepe', 'Velvet', 'Net', 'Denim', 'Wool', 'Blend', 'Other'] },
 

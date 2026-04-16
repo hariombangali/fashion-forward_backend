@@ -1,6 +1,7 @@
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
+const Coupon = require('../models/Coupon');
 const { calculateItemPrice, calculateShipping, validateMOQ } = require('../services/pricing.service');
 const { generateBillPDF } = require('../services/pdf.service');
 const { sendOrderAlertToAdmin, sendOrderConfirmToCustomer, sendShippingUpdate } = require('../services/whatsapp.service');
@@ -13,7 +14,7 @@ const { sendOrderConfirmation } = require('../services/email.service');
  */
 const createOrder = async (req, res, next) => {
   try {
-    const { items: directItems, shippingAddress } = req.body;
+    const { items: directItems, shippingAddress, couponCode } = req.body;
     const user = await User.findById(req.user.id).populate('cart.product');
 
     if (!user) {
@@ -99,7 +100,24 @@ const createOrder = async (req, res, next) => {
     // Calculate totals
     const subtotal = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
     const shippingCharge = calculateShipping(subtotal, userType);
-    const total = subtotal + shippingCharge;
+
+    // Apply coupon discount if provided
+    let discount = 0;
+    let appliedCoupon = null;
+    if (couponCode) {
+      const coupon = await Coupon.findOne({ code: couponCode.toUpperCase() });
+      if (!coupon) {
+        return res.status(400).json({ success: false, message: 'Invalid coupon code' });
+      }
+      const validation = coupon.isValidFor(user._id, user.role, subtotal);
+      if (!validation.valid) {
+        return res.status(400).json({ success: false, message: validation.reason });
+      }
+      discount = coupon.calculateDiscount(subtotal);
+      appliedCoupon = coupon;
+    }
+
+    const total = subtotal + shippingCharge - discount;
 
     // Generate order number
     const orderNumber = await Order.generateOrderNumber();
@@ -113,6 +131,8 @@ const createOrder = async (req, res, next) => {
       shippingAddress,
       subtotal,
       shippingCharge,
+      discount,
+      couponCode: couponCode ? couponCode.toUpperCase() : undefined,
       total,
       status: 'pending',
       statusHistory: [{ status: 'pending', note: 'Order placed' }],
@@ -129,6 +149,21 @@ const createOrder = async (req, res, next) => {
           },
         }
       );
+    }
+
+    // Record coupon usage
+    if (appliedCoupon && discount > 0) {
+      await Coupon.findByIdAndUpdate(appliedCoupon._id, {
+        $inc: { timesUsed: 1 },
+        $push: {
+          usedBy: {
+            user: user._id,
+            order: order._id,
+            discountAmount: discount,
+            usedAt: new Date(),
+          },
+        },
+      });
     }
 
     // Clear user cart

@@ -51,6 +51,7 @@ const validateCoupon = async (req, res, next) => {
           description: coupon.description,
           discountType: coupon.discountType,
           discountValue: coupon.discountValue,
+          minOrderValue: coupon.minOrderValue,
         },
         discount,
       },

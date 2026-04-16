@@ -357,6 +357,8 @@ const createProduct = async (req, res, next) => {
     if (req.files && req.files.length > 0) {
       body.images = req.files.map(f => f.path || f.secure_url || f.url);
     }
+    // Clean up existingImages field (not relevant for create)
+    delete body.existingImages;
 
     // Filter out empty colors (no name)
     if (Array.isArray(body.colors)) {
@@ -449,9 +451,27 @@ const updateProduct = async (req, res, next) => {
       });
       if (cat) body.category = cat._id;
     }
-    if (req.files && req.files.length > 0) {
-      body.images = [...(product.images || []), ...req.files.map(f => f.path || f.secure_url || f.url)];
+    // Handle existingImages — admin sends back only the images they want to KEEP
+    // Parse the JSON array of URLs that should be preserved
+    let keptImages = [];
+    if (body.existingImages) {
+      try {
+        keptImages = typeof body.existingImages === 'string'
+          ? JSON.parse(body.existingImages)
+          : body.existingImages;
+      } catch { keptImages = []; }
+      delete body.existingImages;
+    } else {
+      // If existingImages not sent, keep all current images
+      keptImages = product.images || [];
     }
+
+    // Add newly uploaded images
+    const newImages = req.files && req.files.length > 0
+      ? req.files.map(f => f.path || f.secure_url || f.url)
+      : [];
+
+    body.images = [...keptImages.filter(Boolean), ...newImages];
     if (Array.isArray(body.wholesaleTiers)) {
       body.wholesaleTiers = body.wholesaleTiers
         .filter(t => t && t.minQty && t.pricePerPiece)
@@ -578,22 +598,99 @@ const updateStock = async (req, res, next) => {
 };
 
 /**
- * @desc    Get all active categories
- * @route   GET /api/categories
+ * @desc    Get categories (with product counts). Admin gets all; public gets active only.
+ * @route   GET /api/products/categories
  */
 const getCategories = async (req, res, next) => {
   try {
-    const categories = await Category.find({ active: true })
+    const isAdmin = req.query.admin === 'true';
+    const filter = isAdmin ? {} : { active: true };
+
+    const categories = await Category.find(filter)
       .sort({ sortOrder: 1, name: 1 })
-      .populate('parent', 'name slug')
       .lean();
 
-    res.status(200).json({
-      success: true,
-      data: categories,
-    });
+    // Count active retail products per category
+    const counts = await Product.aggregate([
+      { $match: { active: true, 'visibility.retail': true } },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+    ]);
+    const countMap = {};
+    counts.forEach((c) => { if (c._id) countMap[c._id.toString()] = c.count; });
+
+    const withCounts = categories.map((cat) => ({
+      ...cat,
+      productCount: countMap[cat._id.toString()] || 0,
+    }));
+
+    res.status(200).json({ success: true, data: withCounts });
   } catch (error) {
     next(error);
+  }
+};
+
+/**
+ * @desc    Update a category (admin)
+ * @route   PUT /api/products/categories/:id
+ */
+const updateCategory = async (req, res, next) => {
+  try {
+    const category = await Category.findById(req.params.id);
+    if (!category) {
+      return res.status(404).json({ success: false, message: 'Category not found' });
+    }
+
+    const { name, description, sortOrder, active } = req.body;
+
+    if (name && name.trim() !== category.name) {
+      const existing = await Category.findOne({ name: name.trim(), _id: { $ne: category._id } });
+      if (existing) {
+        return res.status(400).json({ success: false, message: 'A category with this name already exists' });
+      }
+      category.name = name.trim();
+    }
+
+    if (description !== undefined) category.description = description;
+    if (sortOrder !== undefined) category.sortOrder = Number(sortOrder) || 0;
+    if (active !== undefined) category.active = active === 'true' || active === true;
+
+    // Cloudinary upload via multer
+    if (req.file) {
+      category.image = req.file.path;
+    } else if (req.body.image !== undefined) {
+      category.image = req.body.image;
+    }
+
+    await category.save();
+    res.json({ success: true, data: category, message: 'Category updated' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * @desc    Delete a category (admin) — blocked if products are assigned
+ * @route   DELETE /api/products/categories/:id
+ */
+const deleteCategory = async (req, res, next) => {
+  try {
+    const category = await Category.findById(req.params.id);
+    if (!category) {
+      return res.status(404).json({ success: false, message: 'Category not found' });
+    }
+
+    const productCount = await Product.countDocuments({ category: category._id });
+    if (productCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete: ${productCount} product${productCount > 1 ? 's are' : ' is'} assigned to this category`,
+      });
+    }
+
+    await Category.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: 'Category deleted' });
+  } catch (err) {
+    next(err);
   }
 };
 
@@ -780,6 +877,35 @@ const getRelatedProducts = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Live autocomplete suggestions (regex, partial-word safe)
+ * @route   GET /api/products/suggest?q=kurti&limit=8
+ */
+const suggestProducts = async (req, res, next) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.trim().length < 2) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const regex = new RegExp(q.trim(), 'i');
+
+    const products = await Product.find({
+      active: true,
+      'visibility.retail': true,
+      $or: [{ name: regex }, { tags: regex }, { subCategory: regex }],
+    })
+      .limit(8)
+      .select('name slug images category subCategory')
+      .populate('category', 'name slug')
+      .lean();
+
+    res.json({ success: true, data: products });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getProducts,
   getWholesaleProducts,
@@ -791,7 +917,10 @@ module.exports = {
   updateStock,
   getCategories,
   createCategory,
+  updateCategory,
+  deleteCategory,
   getFeaturedProducts,
   searchProducts,
+  suggestProducts,
   getRelatedProducts,
 };

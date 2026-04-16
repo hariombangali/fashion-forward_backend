@@ -41,10 +41,23 @@ const categoryStorage = new CloudinaryStorage({
   },
 });
 
+// ── Review images ──────────────────────────────────────────────────────────
+// Customer-uploaded review photos — compress aggressively (800px, quality 80)
+const reviewStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'fashion-forward/reviews',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+    transformation: [{ width: 800, crop: 'limit', quality: 80, fetch_format: 'auto' }],
+  },
+});
+
 const FILE_LIMIT = { fileSize: 10 * 1024 * 1024 }; // 10 MB
+const REVIEW_LIMIT = { fileSize: 5 * 1024 * 1024, files: 3 }; // 5 MB, max 3 photos
 
 const upload = multer({ storage: productStorage, limits: FILE_LIMIT });
 const uploadBanner = multer({ storage: bannerStorage, limits: FILE_LIMIT });
 const uploadCategory = multer({ storage: categoryStorage, limits: FILE_LIMIT });
+const uploadReview = multer({ storage: reviewStorage, limits: REVIEW_LIMIT });
 
-module.exports = { cloudinary, upload, uploadBanner, uploadCategory };
+module.exports = { cloudinary, upload, uploadBanner, uploadCategory, uploadReview };

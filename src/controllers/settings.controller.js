@@ -52,7 +52,19 @@ const getSettings = async (req, res, next) => {
 const updateSettings = async (req, res, next) => {
   try {
     const settings = await StoreSettings.getSingleton();
-    const body = { ...req.body };
+    let body = { ...req.body };
+
+    // If the admin panel sent multipart/form-data with a JSON `settings` blob,
+    // merge that into body so the rest of the controller sees all fields.
+    if (body.settings && typeof body.settings === 'string') {
+      try {
+        const parsed = JSON.parse(body.settings);
+        body = { ...parsed, ...body };
+        delete body.settings;
+      } catch (e) {
+        return res.status(400).json({ success: false, message: 'Invalid settings JSON' });
+      }
+    }
 
     // Handle file uploads (logo / favicon)
     if (req.files) {

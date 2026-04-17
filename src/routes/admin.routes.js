@@ -6,7 +6,7 @@ const {
   getDashboardStats, getAllOrders, updateOrderStatus, confirmCOD,
   getWholesalerApplications, approveWholesaler, rejectWholesaler,
   getAllCustomers, getAllWholesalers, toggleUserStatus,
-  getSalesReport, getLowStockProducts,
+  getSalesReport, getLowStockProducts, getAnalytics,
 } = require('../controllers/admin.controller');
 
 // All admin routes
@@ -33,5 +33,8 @@ router.put('/users/:id/toggle-status', toggleUserStatus);
 // Reports
 router.get('/reports/sales', getSalesReport);
 router.get('/reports/low-stock', getLowStockProducts);
+
+// Analytics
+router.get('/analytics', getAnalytics);
 
 module.exports = router;

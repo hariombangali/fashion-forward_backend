@@ -566,6 +566,225 @@ const getSalesReport = async (req, res, next) => {
 };
 
 /**
+ * @desc    Get comprehensive analytics data for admin dashboard
+ * @route   GET /api/admin/analytics
+ * @access  Admin
+ */
+const getAnalytics = async (req, res, next) => {
+  try {
+    const days = parseInt(req.query.days, 10) || 30;
+    const rangeStart = new Date();
+    rangeStart.setDate(rangeStart.getDate() - days);
+    rangeStart.setHours(0, 0, 0, 0);
+
+    const twelveMonthsAgo = new Date();
+    twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 11);
+    twelveMonthsAgo.setDate(1);
+    twelveMonthsAgo.setHours(0, 0, 0, 0);
+
+    const nonCancelledMatch = {
+      createdAt: { $gte: rangeStart },
+      status: { $ne: 'cancelled' },
+    };
+
+    const [
+      dailySales,
+      statusDistribution,
+      userTypeSplit,
+      topProducts,
+      categorySales,
+      monthlyTrend,
+      newCustomersMonthly,
+      revenueSummary,
+      paymentBreakdown,
+    ] = await Promise.all([
+      // Daily revenue + orders for the selected window
+      Order.aggregate([
+        { $match: nonCancelledMatch },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+            revenue: { $sum: '$total' },
+            orders: { $sum: 1 },
+            items: { $sum: { $size: '$items' } },
+          },
+        },
+        { $sort: { _id: 1 } },
+        { $project: { _id: 0, date: '$_id', revenue: 1, orders: 1, items: 1 } },
+      ]),
+
+      // Order status distribution (all orders in window)
+      Order.aggregate([
+        { $match: { createdAt: { $gte: rangeStart } } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+        { $project: { _id: 0, status: '$_id', count: 1 } },
+      ]),
+
+      // Customer vs Wholesaler revenue/orders split
+      Order.aggregate([
+        { $match: nonCancelledMatch },
+        {
+          $group: {
+            _id: '$userType',
+            revenue: { $sum: '$total' },
+            orders: { $sum: 1 },
+          },
+        },
+        { $project: { _id: 0, userType: '$_id', revenue: 1, orders: 1 } },
+      ]),
+
+      // Top 10 products by quantity sold
+      Order.aggregate([
+        { $match: nonCancelledMatch },
+        { $unwind: '$items' },
+        {
+          $group: {
+            _id: '$items.product',
+            name: { $first: '$items.name' },
+            quantity: { $sum: '$items.quantity' },
+            revenue: { $sum: '$items.subtotal' },
+          },
+        },
+        { $sort: { quantity: -1 } },
+        { $limit: 10 },
+        { $project: { _id: 0, productId: '$_id', name: 1, quantity: 1, revenue: 1 } },
+      ]),
+
+      // Category-wise sales (lookup into products → lookup into categories)
+      Order.aggregate([
+        { $match: nonCancelledMatch },
+        { $unwind: '$items' },
+        {
+          $lookup: {
+            from: 'products',
+            localField: 'items.product',
+            foreignField: '_id',
+            as: 'productDoc',
+          },
+        },
+        { $unwind: { path: '$productDoc', preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: 'categories',
+            localField: 'productDoc.category',
+            foreignField: '_id',
+            as: 'categoryDoc',
+          },
+        },
+        { $unwind: { path: '$categoryDoc', preserveNullAndEmptyArrays: true } },
+        {
+          $group: {
+            _id: { $ifNull: ['$categoryDoc.name', 'Uncategorized'] },
+            quantity: { $sum: '$items.quantity' },
+            revenue: { $sum: '$items.subtotal' },
+          },
+        },
+        { $sort: { revenue: -1 } },
+        { $project: { _id: 0, category: '$_id', quantity: 1, revenue: 1 } },
+      ]),
+
+      // Monthly revenue trend (last 12 months)
+      Order.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: twelveMonthsAgo },
+            status: { $ne: 'cancelled' },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } },
+            revenue: { $sum: '$total' },
+            orders: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+        { $project: { _id: 0, month: '$_id', revenue: 1, orders: 1 } },
+      ]),
+
+      // New customers per month (last 12 months)
+      User.aggregate([
+        {
+          $match: {
+            role: { $in: ['customer', 'wholesaler'] },
+            createdAt: { $gte: twelveMonthsAgo },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              month: { $dateToString: { format: '%Y-%m', date: '$createdAt' } },
+              role: '$role',
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { '_id.month': 1 } },
+        {
+          $project: {
+            _id: 0,
+            month: '$_id.month',
+            role: '$_id.role',
+            count: 1,
+          },
+        },
+      ]),
+
+      // Revenue summary (total, average order value, total items)
+      Order.aggregate([
+        { $match: nonCancelledMatch },
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: '$total' },
+            totalOrders: { $sum: 1 },
+            totalItems: { $sum: { $size: '$items' } },
+            avgOrderValue: { $avg: '$total' },
+          },
+        },
+        { $project: { _id: 0 } },
+      ]),
+
+      // Payment mode breakdown
+      Order.aggregate([
+        { $match: nonCancelledMatch },
+        {
+          $group: {
+            _id: '$paymentMode',
+            revenue: { $sum: '$total' },
+            orders: { $sum: 1 },
+          },
+        },
+        { $project: { _id: 0, mode: '$_id', revenue: 1, orders: 1 } },
+      ]),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        rangeDays: days,
+        dailySales,
+        statusDistribution,
+        userTypeSplit,
+        topProducts,
+        categorySales,
+        monthlyTrend,
+        newCustomersMonthly,
+        summary: revenueSummary[0] || {
+          totalRevenue: 0,
+          totalOrders: 0,
+          totalItems: 0,
+          avgOrderValue: 0,
+        },
+        paymentBreakdown,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * @desc    Get products with low stock
  * @route   GET /api/admin/products/low-stock
  * @access  Admin
@@ -617,4 +836,5 @@ module.exports = {
   toggleUserStatus,
   getSalesReport,
   getLowStockProducts,
+  getAnalytics,
 };
